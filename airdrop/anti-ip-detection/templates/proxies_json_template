@@ -1,0 +1,6 @@
+{
+  "proxies": [],
+  "rotation_strategy": "random",
+  "test_before_use": true,
+  "timeout": 10
+}

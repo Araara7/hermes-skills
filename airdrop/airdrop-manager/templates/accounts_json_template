@@ -1,0 +1,18 @@
+{
+  "wallet": {
+    "address": "0x...",
+    "chains": ["ethereum", "base", "arbitrum", "optimism", "polygon"],
+    "created": "YYYY-MM-DD"
+  },
+  "email": {
+    "address": "user@gmail.com",
+    "type": "gmail",
+    "login_method": "username:pass:TOTP"
+  },
+  "twitter": {
+    "username": "username",
+    "login_method": "OAuth/cookies"
+  },
+  "status": "active",
+  "created": "YYYY-MM-DD"
+}

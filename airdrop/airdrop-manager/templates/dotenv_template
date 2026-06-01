@@ -1,0 +1,25 @@
+# Airdrop Agent Credentials
+# ⚠️ DO NOT SHARE THIS FILE ⚠️
+# chmod 600 this file after creation
+
+# Email
+EMAIL_ADDRESS=your_email@gmail.com
+EMAIL_PASSWORD=your_password
+EMAIL_TOTP_SECRET=your_totp_secret
+
+# Twitter
+TWITTER_USERNAME=your_username
+TWITTER_PASSWORD=your_password
+TWITTER_BACKUP_CODES=code1,code2,code3
+
+# Wallet
+WALLET_ADDRESS=0xYourAddress
+WALLET_PRIVATE_KEY=0xYourPrivateKey
+
+# API Keys (for captcha solving)
+TWOCAPTCHA_API_KEY=
+CAPSOLVER_API_KEY=
+ANTICAPTCHA_API_KEY=
+
+# Proxy (optional)
+PROXY_URL=
