@@ -105,6 +105,48 @@ def evm_connect(session, wallet, site):
     return r.json().get("success", False)
 ```
 
+## 🔐 Key Management Security (CRITICAL)
+
+**Incident (1 Jun 2026):** Wallet `0xb01E...de3E` compromised — private key stored in plain text across multiple script files. Attacker deployed auto-sweeper, drained all chains. Lesson learned the hard way.
+
+### Rules (WAJIB IKUTI)
+1. **NEVER store private key in script source code** — use environment variables or encrypted config
+2. **NEVER store private key in `/tmp/` files** — world-readable on shared VPS
+3. **Config files with secrets → chmod 600** — `~/airdrop-agent/config/credentials/` only
+4. **Use `wallet_module.py` as single source** — derive keys from encrypted seed, don't copy keys into scripts
+5. **Audit key exposure regularly** — `grep -r "private_key\|priv_key\|0x[0-9a-f]\{64\}" ~/airdrop-agent/scripts/`
+6. **Separate hot wallet from cold wallet** — farming wallet (small amounts) ≠ storage wallet (bulk funds)
+7. **Auto-sweep incoming funds** — if wallet is hot, sweep to cold wallet immediately on deposit
+
+### Encrypted Key Storage Pattern
+```python
+import os, json
+from cryptography.fernet import Fernet
+
+# Store encrypted
+key = Fernet.generate_key()
+f = Fernet(key)
+encrypted = f.encrypt(json.dumps({"seed": "your seed"}).encode())
+# Save: key → env var WALLET_ENC_KEY, encrypted → config/credentials/wallet.enc
+
+# Load decrypted
+seed = json.loads(f.decrypt(encrypted).decode())["seed"]
+```
+
+### Auto-Sweeper Pattern (Defensive)
+Monitor wallet 24/7, sweep incoming funds to cold wallet:
+```python
+from web3 import Web3
+# Poll for new blocks, check balance, if > threshold → sweep to cold wallet
+# Use nonce management to avoid race conditions with attacker
+```
+
+### Key Exposure Audit Command
+```bash
+# Find any plaintext keys in project
+grep -rn "private_key\|priv_key\|seed_phrase\|mnemonic" ~/airdrop-agent/scripts/ ~/airdrop-agent/config/ --include="*.py" --include="*.json" --include="*.sh" | grep -v "encrypted\|\.enc\|chmod"
+```
+
 ## Pitfalls
 - ⚠️ **Cosmos pubkey**: must be base64 string, NOT `{"type": "tendermint/PubKeySecp256k1", "value": "..."}` object
 - ⚠️ **Cosmos signing**: `separators=(',', ':')` but `sort_keys=False`
@@ -138,10 +180,33 @@ cd ~/airdrop-agent && .venv/bin/python3 scripts/wallet_module.py addresses
 cd ~/airdrop-agent && .venv/bin/python3 scripts/wallet_module.py sign all
 ```
 
-### Addresses (from single seed)
+### Addresses (from single seed in wallets.json)
 - Cosmos (JAY): `yjay1aervdugs5rngpq3frszvtvsc6v6afwchatvnf6`
-- EVM (ETH): `0xb01Eaede24ad33b820f8c1bD35eA9324230Ede3E`
+- EVM (OLD): `0xb01Eaede24ad33b820f8c1bD35eA9324230Ede3E` ← **COMPROMISED — DO NOT USE**
+- EVM (CURRENT): `0x000A5c7AC1963a890796D3E8f823AFcB28f4c55A` (user-created, primary farming wallet)
 - Solana: `D98Jh6rr2gtcTmn2knzzcCfqmDwZtvMJHujw5xe1iPKP`
+
+### EVM Key Derivation from Seed
+Derive EVM private key from `wallets.json` master seed using BIP44:
+```python
+from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
+import json
+
+with open("config/wallets.json") as f:
+    cfg = json.load(f)
+seed_bytes = Bip39SeedGenerator(cfg["master_seed"]).Generate()
+bip44 = Bip44.FromSeed(seed_bytes, Bip44Coins.ETHEREUM)
+acc = bip44.Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+priv_key = acc.PrivateKey().Raw().ToHex()  # 64 hex chars
+address = acc.PublicKey().ToAddress()       # 0x...
+```
+
+### Config Loader
+All scripts MUST load keys via `config_loader.py`, never hardcode. Template: `airdrop-manager` skill → `templates/config_loader.py`. Usage:
+```python
+from config_loader import get_key
+PRIV_KEY = get_key("wallet_private_key")  # from .env
+```
 
 ## Related Skills
 - `airdrop-api-discovery` — find the endpoints first

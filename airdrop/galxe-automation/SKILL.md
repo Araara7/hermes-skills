@@ -387,6 +387,8 @@ for camp in all_campaigns:
 - `references/wasm-captcha.md` — WASM captcha internals (CDN paths, module structure)
 - `references/wasm-captcha-chromium.md` — **Chromium headless solution** (working approach, error catalog, webpack shim patterns)
 - `references/webpack-require-shim.md` — **NEW** Complete webpack require shim code with all helpers explained
+- `references/galxe-social-account-management.md` — **NEW** Social account API limitations, browser auth failures, nodriver findings
+- `references/wasm-captcha-nodriver.md` — **NEW** WASM captcha module 95088 internals, webpack access, lazy loading
 - `references/galxe-social-account-switching.md` — **NEW** Investigation results: all attempts to switch connected Twitter, definitive blockers, Galxe frontend stack details
 
 ## Pitfalls
@@ -426,6 +428,17 @@ for camp in all_campaigns:
 ## GitHub References
 - `C0mbustibll/galxe_claimer` ⭐53 — GeeTest v4 claim flow (legacy, pre-WASM). Shows GeeTest captcha_id, `gcaptcha4.geetest.com` endpoints, `PrepareParticipate` mutation format.
 - `dante4rt/galxe-autocomplete-tasks` ⭐222 — Browser DevTools script for auto-completing Galxe tasks.
+
+## Workflow Style (User Preference)
+
+**Hacker mode:** Cari akal, exploit, bypass, jangan pernah nyerah. Gak ada "gak bisa", cuma "belum nemu cara-nya".
+
+Rules:
+1. **API first, browser last** — reverse engineer dulu
+2. **Autonomous total** — eksekusi langsung, jangan tanya balik
+3. **No spam** — diam saat kerja, cuma kirim hasil akhir
+4. **Creative bypass** — kalau satu jalan diblok, cari 10 jalan lain
+5. **Exploit tiap celah** — mock mode, expired validation, API lemah
 
 ## Workflow
 
@@ -516,12 +529,13 @@ await asyncio.sleep(15)
 | Anti-detect | ✅ best | ✅ good | ❌ bad |
 | Async | ✅ native | ❌ sync | ✅ both |
 
-**Social Account Management Limitations:**
+- **Social Account Management Limitations:**
 - `deleteSocialAccount` mutation EXISTS in schema but CANNOT be called via API (`GRAPHQL_VALIDATION_FAILED`)
 - `getSocialAuthUrl` requires browser session JWT (not API JWT from SIWE signin)
 - Galxe uses AppKit/WalletConnect — `window.ethereum` injection doesn't work
 - Browser wallet auth requires proper AppKit SDK connection
 - **Conclusion:** Social account switching (disconnect/reconnect Twitter) requires manual browser action by user. One-time setup only.
+- **Wallet compromise response:** If Galxe wallet compromised, immediately: (1) generate new wallet, (2) stop all Galxe cron, (3) update `galxe_token.json` + `.env`, (4) re-auth Galxe with new wallet via SIWE, (5) re-follow spaces, (6) report to Galxe if needed. See `unified-auth-manager` skill for full compromise response workflow.
 
 - **Claim requires WASM captcha**: Can verify tasks via API but claim needs WASM captcha token. **Solution: Chromium headless** (Playwright) generates valid tokens. See `scripts/galxe_captcha_solver.py`. Fallback: 2captcha/CapSolver API (~$3/1000).
 - **Visit tasks blocked**: No browser auth = can't auto-verify visit link tasks.

@@ -116,10 +116,16 @@ User: "List project"
 
 ## Security Rules
 
-1. **NEVER** store private keys in plaintext
-2. **NEVER** commit wallet data to git
-3. **ALWAYS** use .gitignore for sensitive data
-4. **VERIFY** project legitimacy before engaging
+1. **NEVER** store private keys in plaintext in scripts — use `.env` + `config_loader.py`
+2. **NEVER** commit wallet data or `.env` to git
+3. **ALWAYS** `.gitignore` for sensitive data (`.env`, `config/credentials/*.json`, `*.key`, `*.pem`)
+4. **ALWAYS** `chmod 600` on `.env` and credential files
+5. **VERIFY** project legitimacy before engaging
+6. **SEPARATE** hot wallet (farming) from cold wallet (storage)
+7. **AUTO-SWEEP** — any funds landing in hot wallet should be moved to cold wallet immediately
+8. **AUDIT** credential storage regularly: `grep -rn "0x[0-9a-fA-F]\{60,\}" ~/airdrop-agent/scripts/`
+
+**Config Loader Pattern:** All scripts MUST use `config_loader.py` to load secrets. Template: see `airdrop-manager` skill → `templates/config_loader.py`.
 
 ## Common Chains
 - Ethereum, Base, Arbitrum, Optimism, Polygon
@@ -133,3 +139,5 @@ User: "List project"
 3. **Sybil detection** - Jangan pakai wallet pattern yang terdeteksi
 4. **Deadline miss** - Set reminder untuk claim window
 5. **Multi-wallet** - Track wallet mana yang dipakai project mana
+6. **Plain text keys** — JANGAN pernah hardcode private key di script. Pakai `.env` + `config_loader.py`. Ini penyebab wallet compromise 1 Jun 2026.
+7. **Spam tokens** — Setelah wallet compromised, 99% token di wallet = spam/phishing. Jangan coba "claim" token dengan URL scam di nama.

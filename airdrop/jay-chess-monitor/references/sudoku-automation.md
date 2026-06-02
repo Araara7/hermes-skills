@@ -49,7 +49,7 @@ import json, hashlib, base64, requests
 from bip_utils import Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes, Bech32Encoder
 import hashlib as hl
 
-SEED_PHRASE = "museum length cake oven wasp hair burst tuna radar virus crew logic"
+SEED_PHRASE = "*** # Load from wallets.json, NEVER hardcode"
 
 seed_bytes = Bip39SeedGenerator(SEED_PHRASE).Generate()
 bip44 = Bip44.FromSeed(seed_bytes, Bip44Coins.COSMOS)

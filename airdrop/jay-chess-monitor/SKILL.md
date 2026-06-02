@@ -30,7 +30,20 @@ tags: [airdrop, jay-games, chess, monitoring]
 
 ---
 
-## ⚠️ ATURAN KETAT (WAJIB DIIKUTI)
+**⚠️ CRITICAL: Security Fix (2 Juni 2026)**
+Seed phrase was hardcoded in `jay_sudoku_solver.py` line 34. Fixed to load from wallets.json:
+```python
+# SEBELUM (Bocor!):
+SEED_PHRASE = "museum length cake oven wasp..."
+
+# SEKARANG (Aman):
+_wallets_path = Path.home() / "airdrop-agent" / "config" / "wallets.json"
+with open(_wallets_path) as _f:
+    SEED_PHRASE = json.load(_f)["master_seed"]
+```
+Also check: cron output logs may contain seed phrase from previous runs. Delete any log files containing the seed.
+
+## ⚠️ ATURAN KETAT (WAJIB DIKUTI)
 
 ### Safety Rules:
 1. **Error Limit**: Jika game reset/error **3x berturut-turut** → **STOP bermain**
@@ -51,6 +64,7 @@ max_claim_attempts = 5  # Increased from 3 — retriable errors need more attemp
 
 RETRIABLE_ERRORS = ["play longer", "play more", "transaction failed", "unexpected token"]
 DAILY_LIMIT_ERRORS = ["daily claim limit reached", "claim limit"]  # normal exit, not a failure
+RATE_LIMIT_ERRORS = ["too many requests"]  # rate-limited after retries — permanent fail for THIS game, but DON'T count toward 3-fail-stop
 
 for each game_session:
     if error:
@@ -64,6 +78,8 @@ for each game_session:
     if claim_failed:
         if any(kw in error.lower() for kw in DAILY_LIMIT_ERRORS):
             STOP immediately — daily limit hit, report final stats, exit cleanly
+        elif any(kw in error.lower() for kw in RATE_LIMIT_ERRORS):
+            SKIP this game — rate-limited after retries, continue to next game
         elif any(kw in error.lower() for kw in RETRIABLE_ERRORS):
             DON'T count — retriable, wait 3s, retry
         else:
@@ -80,6 +96,7 @@ for each game_session:
 - `"Transaction failed"` — server-side tx issue, retry setelah 3s (biasanya sukses di attempt 2-4)
 - `"Unexpected token '<'"` — server returned HTML instead of JSON, retry setelah 3s
 - `"Daily claim limit reached"` — **NORMAL EXIT**, bukan error. Daily limit (15 claims) sudah habis. Script akan stop otomatis. Report final stats (claims today, total earned). No fix needed — just wait until tomorrow.
+- `"Too many requests, try again later"` — **RATE-LIMIT EXIT**. Happens after multiple "Transaction failed" retries exhaust the server's patience. NOT retriable — skip this game and move to next. Observed pattern: 4× "Transaction failed" → 1× "Too many requests" (Game #11, 2 June 2026). Script continues to next game normally.
 - Pattern yang terbukti: attempt 1-3 gagal → attempt 4 sukses. JANGAN stop terlalu awal!
 
 ### Setup: venv Required
@@ -88,14 +105,25 @@ Ubuntu uses externally-managed Python. Must use venv:
 cd ~/airdrop-agent
 python3 -m venv .venv
 # Install from PyPI (Tencent mirror may be unreachable — use --index-url fallback)
-.venv/bin/pip install --index-url https://pypi.org/simple/ playwright requests bip_utils
+.venv/bin/pip install --index-url https://pypi.org/simple/ playwright requests bip_utils ecdsa
 .venv/bin/playwright install chromium
 ```
+
+**⚠️ CRITICAL: Seed Phrase Security**
+NEVER hardcode seed phrase in script source. Always load from wallets.json:
+```python
+import json
+from pathlib import Path
+with open(Path.home() / "airdrop-agent" / "config" / "wallets.json") as f:
+    SEED_PHRASE = json.load(f)["master_seed"]
+```
+This was a real incident — seed was hardcoded in jay_sudoku_solver.py and a skill reference file. Fixed 2 June 2026.
 
 **⚠️ Full dependency list for script v6:**
 - `playwright` — browser automation for Sudoku solving
 - `requests` — HTTP client for api.php endpoints
 - `bip_utils` — wallet derivation (BIP44, RIPEMD160, Bech32). Transitively installs: `ecdsa`, `pycryptodome`, `coincurve`, `pynacl`, etc.
+- `ecdsa` — secp256k1 signing for Cosmos TX (explicit dep, needed for send_jay)
 
 **⚠️ Venv recovery — if `.venv` is missing or broken:**
 Cron jobs may fail with `No such file or directory` if the venv was deleted or corrupted. The fix is to recreate it:
@@ -142,6 +170,23 @@ cd ~/airdrop-agent && .venv/bin/python3 -u scripts/jay_sudoku_solver.py
 ```
 
 Juga berlaku untuk subprocess.run() di dalam script — child process perlu `-u` flag juga.
+
+### Hermes Terminal Tool 600s Timeout Pitfall
+When running the solver from Hermes agent (not direct shell), the terminal tool has a **600s foreground max timeout**. The solver takes ~75-82 min for 15 games, so foreground mode WILL timeout.
+
+**Solution:** Use background mode with tee for logging:
+```bash
+# ✅ CORRECT — background mode, log to file, notified on complete
+cd ~/airdrop-agent && DISPLAY=:99 timeout 5400 .venv/bin/python3 -u scripts/jay_sudoku_solver.py 2>&1 | tee /tmp/jay_sudoku_run.log
+# Set: background=true, notify_on_complete=true
+
+# Monitor progress:
+tail -50 /tmp/jay_sudoku_run.log
+```
+
+**❌ WRONG** — foreground with timeout 5400 will silently cap at 600s and kill the process mid-game.
+
+**Observed:** Cron jobs use `timeout 5400` which works fine. Only the Hermes interactive terminal tool has this 600s limit.
 
 ### Site Unreachable Detection
 ```bash
@@ -396,6 +441,28 @@ Full automation with:
 - Claim: simple POST → PoW challenge + solve + submit
 
 ### 6. Report Format
+
+## Security Fix (2 June 2026)
+
+**Issue:** Seed phrase was hardcoded in `jay_sudoku_solver.py` line 34.
+**Fix:** Changed to load from `wallets.json` at runtime:
+```python
+# BEFORE (INSECURE):
+SEED_PHRASE = "museum length cake oven wasp..."
+
+# AFTER (SECURE):
+_wallets_path = Path.home() / "airdrop-agent" / "config" / "wallets.json"
+with open(_wallets_path) as _f:
+    SEED_PHRASE = json.load(_f)["master_seed"]
+```
+
+**Also fixed:**
+- Removed seed phrase from skill reference file `sudoku-automation.md`
+- Deleted cron output that contained leaked seed phrase
+
+**Lesson:** NEVER hardcode seed phrases or private keys. Always load from `wallets.json` or `.env` via `config_loader.py`.
+
+## Security Fix (2 June 2026)
 ```
 📊 JAY Games Chess Monitor
 🔌 Koneksi: ✅/❌
@@ -437,6 +504,7 @@ Claim sering gagal di attempt pertama, tapi sukses di attempt ke-3/4. Pola:
 - `"Connect wallet first!"` → setup issue
 - `"Session error"` → refresh page
 - `"bot blocked"` → anti-bot detected
+- `"Too many requests, try again later"` → rate-limited after multiple retries, skip game (observed after 4× Transaction failed)
 
 **Settings yang terbukti work:**
 - `MAX_CLAIM_ATTEMPTS = 5` (bukan 3)
@@ -503,7 +571,7 @@ Script: `~/airdrop-agent/scripts/jay_sudoku_solver.py` (v6)
 8. POST `api.php?api=claim` → +0.25 JAY (unverified)
 9. Wait 330s cooldown → repeat
 
-**Performance:** ~26s per game solve, ~6 min per game (with cooldown), 100% success rate
+**Performance:** ~26s per game solve, ~5.8 min per game (with cooldown). Claim success rate ~92% (12/13 in 2 June run — 1 game rate-limited by "Too many requests").
 
 **Key pitfalls:**
 - `state` is inside IIFE, not accessible via `page.evaluate`. Must solve puzzle independently.
@@ -524,6 +592,19 @@ cd ~/airdrop-agent && DISPLAY=:99 timeout 300 .venv/bin/python3 scripts/jay_ches
 
 **Pitfall:** Site sangat lambat (~45s response). Timeout HARUS 120s, bukan 30s.
 
+## JAY Token Transfer (Cosmos SDK)
+
+Send JAY tokens between wallets on the JAY Network blockchain. Uses protobuf encoding + secp256k1 signing.
+
+**Full guide**: See `references/cosmos-sdk-signing.md` for complete tx building, signing, and broadcasting code.
+
+Key points:
+- Chain ID: `thejaynetwork` (NOT `jaynetwork-1`)
+- Chain API: `https://api-jayn.winnode.xyz`
+- Signature: 64-byte compact (NOT DER)
+- PubKey: nested protobuf encoding required
+- Address: RIPEMD160(SHA256(pubkey)) → 43 chars
+
 ## References
 
 - `references/sudoku-automation.md` — JAY Sudoku Expert automation (solver, DOM patterns, claim status)
@@ -532,6 +613,16 @@ cd ~/airdrop-agent && DISPLAY=:99 timeout 300 .venv/bin/python3 scripts/jay_ches
 - `references/claim-flow.md` — Claim API detail (⚠️ deprecated, old PHP API)
 - `references/site-migration-2026.md` — Site migration notes (PHP → Next.js)
 - `references/mining-watchdog-pattern.md` — Mining watchdog cron template
+- `references/cosmos-sdk-tx-signing.md` — Cosmos SDK protobuf tx signing (in testnet-operations skill)
+
+## Educational Materials (Drainer/Attack)
+
+Full educational content at `~/airdrop-agent/data/edukasi/`:
+- `DrainSimulator.sol` — Smart contract showing approval/drain flow
+- `drainer_bot.py` — Bot simulation (scan → detect → drain)
+- `deploy_testnet.py` — Deploy to testnet for testing
+- `README.md` — Complete guide with attack flow diagrams
+- `~/airdrop-agent/data/edukasi_drainer.md` — Attack mechanics explained
 
 ## Scripts
 
@@ -585,7 +676,44 @@ Alert format:
 
 Lihat `references/mining-watchdog-pattern.md` untuk template cron job lengkap.
 
+## JAY Mining Status (2 June 2026)
+
+**Mining wallet:** `yjay1s4m4ujrhuda6tmlh9u0jxafgutfjzup55srq0t`
+**Sudoku wallet:** `yjay1aervdugs5rngpq3frszvtvsc6v6afwchatvnf6` (RIPEMD160 derived, 43 chars)
+**Chain:** `thejaynetwork`, API: `https://api-jayn.winnode.xyz`
+**Mining balance:** ~2,572 JAY (pool internal + on-chain)
+**Sudoku earnings:** 0.25 JAY/game unverified, max 3.75 JAY/day
+
+## Cosmos SDK TX Signing (JAY Network)
+
+**Critical**: JAY Network uses Cosmos SDK with specific protobuf encoding requirements. Standard approaches fail.
+
+### Key Learnings (verified 2 June 2026):
+1. **PubKey encoding**: Must use nested protobuf — `field_bytes(1, pub_compressed)` inside the PubKey Any value
+2. **Signature format**: 64-byte compact (r+s), NOT 72-byte DER. Must enforce low-S.
+3. **Chain ID**: `thejaynetwork` (not `jaynetwork-1`)
+4. **Memo field**: Omit entirely if empty (don't encode empty string)
+5. **Account info**: `pub_key: null` on first tx (normal — first tx sets it)
+
+### Quick Reference:
+```python
+# PubKey (NESTED!)
+pubkey_inner = field_bytes(1, pub_compressed)  # field 1 inside field 2
+pub_any = field_bytes(1, "/cosmos.crypto.secp256k1.PubKey") + field_bytes(2, pubkey_inner)
+
+# Signature (64-byte compact, low-S)
+sig = sk.sign_digest(sign_hash, sigencode=ecdsa.util.sigencode_string)
+r_val, s_val = sig[:32], sig[32:]
+s_int = int.from_bytes(s_val, 'big')
+n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+if s_int > n // 2: s_int = n - s_int
+signature = r_val + s_int.to_bytes(32, 'big')  # 64 bytes
+```
+
+See also: `references/cosmos-sdk-tx-signing.md` in testnet-operations skill for full working example.
+
 ## Related Skills
 - `web3-gaming-automation` — Parent skill with full API docs, canvas patterns, and troubleshooting
 - `anti-ip-detection` — VPN/proxy for IP rotation (Cloudflare WARP free)
 - `airdrop-manager` — Master orchestrator for all airdrop tasks
+- `testnet-operations` — Cosmos SDK tx signing, bulk transfers, Flashbots Protect

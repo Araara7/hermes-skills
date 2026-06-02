@@ -65,15 +65,66 @@ curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/53
 └── logs/
 ```
 
-### 2. Credential Flow
-1. User berikan credentials
-2. Simpan ke `.env` (chmod 600)
-3. Simpan metadata ke `accounts.json` (tanpa secrets)
-4. Login sekali → ambil token/cookies
-5. Simpan token → tidak perlu buka browser lagi
-6. Gunakan token untuk automasi
+### 2. Credential Flow (SECURITY-CRITICAL)
 
-### 3. Wallet Management
+**⚠️ LESSON LEARNED (1 Jun 2026):** Private key di plain text di script = wallet compromised. User marah besar. JANGAN ulangi.
+
+**Step-by-step:**
+1. User berikan credentials
+2. **LANGSUNG simpan ke `.env`** — JANGAN pernah hardcode di script
+3. Jalankan `chmod 600` pada semua `.env` dan `config/credentials/*.json`
+4. Pastikan `.gitignore` blokir `.env`, `config/credentials/*.json`, `*.key`, `*.pem`
+5. Simpan metadata ke `accounts.json` (tanpa secrets)
+6. Login sekali → ambil token/cookies
+7. Simpan token → tidak perlu buka browser lagi
+8. Gunakan token untuk automasi
+
+**Config Loader Pattern (WAJIB dipakai di semua script):**
+```python
+# config_loader.py — single source of truth untuk semua secrets
+import os
+from pathlib import Path
+
+def get_config():
+    env_paths = [
+        Path(__file__).parent / ".env",
+        Path(__file__).parent / "config" / "credentials" / ".env",
+    ]
+    config = {}
+    for env_path in env_paths:
+        if env_path.exists():
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, _, value = line.partition("=")
+                        key, value = key.strip(), value.strip().strip('"').strip("'")
+                        if value and not value.startswith("<") and value != "***":
+                            config[key.lower()] = value
+    return {
+        "wallet_private_key": config.get("new_wallet_private_key") or config.get("wallet_private_key", ""),
+        "galxe_wallet_key": config.get("galxe_wallet_key", ""),
+        "gmail_user": config.get("gmail_user", ""),
+        # ... tambahkan sesuai kebutuhan
+    }
+
+def get_key(name: str) -> str:
+    return get_config().get(name, "")
+```
+
+**Usage di script:**
+```python
+from config_loader import get_key
+PRIV_KEY = get_key("wallet_private_key")  # ← dari .env, bukan hardcoded
+```
+
+**Audit command (jalankan berkala):**
+```bash
+grep -rn "0x[0-9a-fA-F]\{60,\}\|private_key.*=.*['\"]" ~/airdrop-agent/scripts/ --include="*.py" | grep -v "config_loader\|import\|#\|0x0000"
+```
+
+### 3. Wallet Management (SECURITY-HARDENED)
+
 Gunakan `wallet_module.py` untuk semua wallet operations:
 
 ```python
@@ -93,6 +144,15 @@ solana_sig = solana_sign(message, keypair)
 
 **Config:** `~/airdrop-agent/config/wallets.json` (chmod 600)
 **Addresses:** Cosmos, EVM, Solana — all derived from single seed phrase.
+
+**⚠️ SECURITY RULES (post-compromise, 1 Jun 2026):**
+- Private key JANGAN pernah di-hardcode di script — ambil dari `config_loader.py` → `.env`
+- Config files → `chmod 600`, JANGAN world-readable
+- Hot wallet (farming) ≠ cold wallet (storage) — pisahkan!
+- Auto-sweep: kalau wallet terima dana, langsung pindah ke cold wallet
+- Audit berkala: `grep -rn "priv.*key\|seed\|0x[0-9a-f]\{64\}" ~/airdrop-agent/scripts/`
+- Full security guide: `airdrop-wallet-connect` skill → Key Management Security section
+- **Config loader template:** `templates/config_loader.py` — copy ke project root, semua script import dari sana
 
 ### 4. Task Execution
 1. Cek task baru dari trackers
@@ -291,15 +351,89 @@ cat /tmp/repo_inspect/README.md | head -50
 - `references/galxe-api.md` — Galxe GraphQL API: auth, queries, task types, pitfalls
 - Galxe automation: `~/airdrop-agent/galxe-autocomplete-tasks/` — browser console script, perlu adaptasi ke Camoufox
 
+### GitHub Skills Repo Auto-Sync
+Skills di-push otomatis ke `github.com/Araara7/hermes-skills` setiap hari jam 10 WIB.
+Cron job: `skills-github-sync` (job_id: `025d10ecbce5`)
+Pattern: rsync ~/.hermes/skills/ → clone repo → diff → commit → push
+
+### Wallet Security Monitoring
+**PENTING:** Monitor wallet activity secara berkala. Jika wallet mengirim token tanpa inisiasi dari script kita → kemungkinan private key compromised.
+
+**Full investigation workflow:** `references/wallet-security-monitoring.md` — includes multi-chain check, attacker profiling, EIP-7702 detection, VPS leak audit.
+
+**Quick check:**
+```bash
+for chain in base gnosis optimism arbitrum; do
+  curl -s "https://${chain}.blockscout.com/api/v2/addresses/<WALLET>/transactions" | \
+    python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print(f'{chain}: {len(items)} txs, latest: {items[0][\"timestamp\"][:19] if items else \"none\"}')" 2>/dev/null
+done
+```
+
+**Jika terdeteksi unauthorized TX:**
+1. Jangan panic — cek dulu apakah TX berasal dari script kita
+2. Build timeline across all chains (lihat reference)
+3. Profile attacker address (balance, victims, infrastructure)
+4. Cek VPS untuk leak source: `grep -rn "priv.*key\|seed\|0x[0-9a-f]\{64\}" ~/airdrop-agent/`
+5. Jika confirmed compromised → segera generate wallet baru, update semua config
+6. Report ke user dengan detail attacker
+
+### Compromised Wallet Airdrop Recovery
+
+Ketika wallet compromised (attacker punya private key) tapi wallet masih eligible airdrop:
+
+**Race Condition:** User DAN attacker punya akses sama. Klaim airdrop = siapa cepat dia dapat.
+
+**Strategy (Flashbots Protect):**
+1. Monitor eligibility — `earni.fi`, `airdrops.io`, official claim pages
+2. Deposit gas via **Flashbots Protect** (private RPC) — attacker tidak bisa lihat TX
+3. Klaim airdrop via Flashbots Protect
+4. Transfer hasil ke wallet baru — semua dalam private mempool
+
+**Protected RPC Endpoints:**
+```python
+PROTECTED_RPCS = {
+    "ethereum": "https://rpc.mevblocker.io",
+    "arbitrum": "https://rpc.flashbots.net/arbitrum",
+    "optimism": "https://rpc.flashbots.net/optimism",
+    "base": "https://rpc.flashbots.net/base",
+    "polygon": "https://rpc.flashbots.net/polygon",
+    "bsc": "https://bsc.meowrpc.com",
+}
+```
+
+**Critical:** JANGAN deposit gas ke wallet lama tanpa langsung klaim! Attacker bisa sweep gas yang di-deposit. Deposit + klaim harus secepat mungkin, ideally dalam block yang sama.
+
+**Scripts:**
+- `~/airdrop-agent/scripts/flashbots_protect.py` — TX sender via private RPC
+- `~/airdrop-agent/scripts/airdrop_protect.py` — full claim workflow
+
+Full reference: `testnet-operations` skill → "Private RPC / Flashbots Protect" section.
+See also: `references/flashbots-protect.md` — endpoints, usage, BscScan V2 migration.
+See also: `references/airdrop-recovery-compromised.md` — full recovery workflow for compromised wallets.
+
+### Nodriver (Anti-Detect Browser)
+Python anti-detect browser, CDP-based, no Selenium. Best untuk bypass bot detection.
+```python
+import nodriver as uc
+CHROME = "/home/ubuntu/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome"
+browser = await uc.start(headless=True, browser_executable_path=CHROME,
+    browser_args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'])
+# navigator.webdriver = false (undetected!)
+```
+Combo: **nodriver** (anti-detect navigate) + **Chromium** (WASM captcha) = full coverage.
+
 ## Pitfalls
 
 ⚠️ **JANGAN:**
 - Buka browser terus-menerus
-- Simpan password di plain text
+- **Simpan private key di plain text di script** ← PENYEBAB WALLET COMPROMISE 1 JUN 2026
+- Hardcode key di `PRIV_KEY = "0x..."` — selalu pakai `config_loader.py` + `.env`
 - Multi-akun/sybil attack
 - Share credentials
 - Pakai free proxy (90%+ dead, blacklisted)
 - Coba inject auth ke Galxe browser (server-side JWT, tidak bisa)
+- Simpan seed phrase di `.json` file — pindahkan ke `.env`
+- Skip `chmod 600` pada credential files
 
 ✅ **LAKUKAN:**
 - Login sekali → simpan token
@@ -309,3 +443,4 @@ cat /tmp/repo_inspect/README.md | head -50
 - Pakai wallet_module.py untuk semua chain signing
 - Pakai Cloudflare WARP atau hide.me untuk ganti IP (bukan free proxy)
 - Pakai subprocess untuk Camoufox jika nested call (sync API tidak bisa re-enter)
+- **Semua secret lewat `.env` + `config_loader.py`** — TIDAK ADA EXCEPTION

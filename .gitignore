@@ -1,6 +1,2 @@
-*.pyc
-__pycache__/
-.env
-*.json
-!SKILL.md
-.DS_Store
+.usage.json
+.usage.json.lock

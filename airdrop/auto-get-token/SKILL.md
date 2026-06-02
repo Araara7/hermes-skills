@@ -270,6 +270,7 @@ tokens = await tab.evaluate("""(() => {
 - Pakai expired token
 - Skip error handling
 - Buka browser untuk setiap operasi
+- **MASK/REDACT matched values** — User sangat tidak suka `...` atau `***` di output. Kirim SEMUA value lengkap, tidak dipotong. Ini berlaku untuk semua findings: secret scanner, token extraction, API discovery. Jika ada concern security, tandai sebagai DEMO/CONTOH tapi tetap tampilkan full value.
 
 ✅ **LAKUKAN:**
 - Extract sekali, pakai berkali-kali
@@ -297,6 +298,7 @@ tokens = await tab.evaluate("""(() => {
 - `references/token_handling.md` — Cara handle token
 - `references/twitter-cookie-extraction.md` — **Panduan lengkap extract Twitter cookies** (termasuk httpOnly auth_token)
 - `references/email-verification.md` — **Workflow verifikasi email untuk airdrop**
+- `references/github-secret-scanner.md` — **24/7 GitHub secret scanner pattern** — screen setup, pattern matching, Telegram auto-notify, daily report cron
 
 ## Teknik yang Terbukti (Session Mei 2026)
 

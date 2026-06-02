@@ -335,9 +335,45 @@ Full trace with backtrace:
 RUST_LOG=trace RUST_BACKTRACE=1 himalaya envelope list
 ```
 
+## Sending Emails with Attachments (Hermes Pattern)
+
+When sending files via email from Hermes, **always use MML multipart syntax**. Sending a plain text email and "hoping" the file gets attached does NOT work — the recipient gets an empty body with no attachment.
+
+### Working Pattern (copy & modify)
+
+```python
+# In execute_code or terminal:
+mml = '''From: Display Name <user@example.com>
+To: recipient@example.com
+Subject: Your Subject
+
+<#multipart type=mixed>
+<#part type=text/plain>
+Email body text goes here. This is what the recipient sees first.
+
+<#part filename=/absolute/path/to/file1.md name=file1.md><#/part>
+<#part filename=/absolute/path/to/file2.json name=file2.json><#/part>
+<#/multipart>
+'''
+
+# Write to temp file, then pipe to himalaya
+with open('/tmp/email.mml', 'w') as f:
+    f.write(mml)
+
+# terminal: cat /tmp/email.mml | himalaya template send
+```
+
+### Pitfalls
+
+- **Empty body / no attachment**: Caused by NOT using `<#multipart type=mixed>` + `<#part filename=...>` tags. Plain text emails never carry attachments.
+- **"cannot send message without a sender"**: The `From:` header must be the **full email address** (e.g., `From: Name <user@example.com>`), NOT the himalaya account name (e.g., `From: gmail`).
+- **MML special characters**: If email body contains `<#` sequences (e.g., code snippets), escape them as `< #` to prevent MML parser confusion.
+- **Large files**: Gmail attachment limit is 25MB. For larger files, upload to Drive and share link instead.
+- **Python string escaping**: When building MML in Python f-strings, watch for `\n` in file content — read files with `terminal("cat path")` and inject raw content, don't use `read_file` which adds line numbers.
+
 ## Tips
 
-- Use `himalaya --help` or `himalaya <command> --help` for detailed usage.
-- Message IDs are relative to the current folder; re-list after folder changes.
+- Use `himalaya --help` or `himalaya <command> --help` for more detail.
+- Message IDs are relative to the current folder; re-list after moving messages.
 - For composing rich emails with attachments, use MML syntax (see `references/message-composition.md`).
 - Store passwords securely using `pass`, system keyring, or a command that outputs the password.
